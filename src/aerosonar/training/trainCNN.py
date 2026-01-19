@@ -1,19 +1,21 @@
-
 import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
+import time
 from aerosonar.models.spectrogramCNN import SpectrogramCNN
 from aerosonar.data.dataset import *
-LR = 0.00005
+from aerosonar.config import load_default_config
+LR = 0.00002
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-net = SpectrogramCNN(freq_bins=128, time_frames=87, num_classes=2).to(device)
-criterion = nn.CrossEntropyLoss()
+net = SpectrogramCNN().to(device)
+weights = torch.tensor([1.2, 0.8]).to(device)
+criterion = nn.CrossEntropyLoss(weight=weights)
 optimizer = optim.AdamW(net.parameters(), LR, [0.9,0.99], 1e-10)
 
+config = load_default_config()
 
-import time
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -92,8 +94,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        images = images.cuda(non_blocking=True)
-        target = target.cuda(non_blocking=True)
+        images = images.to(device, non_blocking=True).float()
+        target = target.to(device, non_blocking=True).long()
 
         # compute output
         output = model(images)
@@ -135,8 +137,8 @@ def validate(val_loader, model, criterion):
     with torch.no_grad():
         end = time.time()
         for i, (images, target) in enumerate(val_loader):
-            images = images.cuda(non_blocking=True)
-            target = target.cuda(non_blocking=True)
+            images = images.to(device, non_blocking=True).float()
+            target = target.to(device, non_blocking=True).long()
 
             # compute output
             output = model(images)
@@ -162,13 +164,46 @@ def validate(val_loader, model, criterion):
     return top1.avg, losses_list, errors
 
 
+def evaluate_with_confusion(model, loader, device):
+    model.eval()
+
+    TP = FP = TN = FN = 0
+
+    with torch.no_grad():
+        for x, y in loader:
+            x = x.to(device).float()
+            y = y.to(device).long()
+
+            logits = model(x)
+            probs = torch.softmax(logits, dim=1)
+            preds = (probs[:, 1] > 0.3).long()
+
+            TP += ((preds == 1) & (y == 1)).sum().item()
+            TN += ((preds == 0) & (y == 0)).sum().item()
+            FP += ((preds == 1) & (y == 0)).sum().item()
+            FN += ((preds == 0) & (y == 1)).sum().item()
+
+    return TP, FP, TN, FN
+
+
+def confusion_metrics(TP, FP, TN, FN):
+    total = TP + FP + TN + FN
+    acc  = (TP + TN) / total if total else 0
+    prec = TP / (TP + FP) if (TP + FP) else 0
+    rec  = TP / (TP + FN) if (TP + FN) else 0
+    f1   = 2 * prec * rec / (prec + rec) if (prec + rec) else 0
+    return acc, prec, rec, f1
+
+
+
+
 EPOCHS = 20
 
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
     optimizer,
     mode='min',
     factor=0.1,
-    patience=1)
+    patience=3)
 
 
 train_losses = []
@@ -177,6 +212,9 @@ test_losses = []
 test_acc1 = []
 test_error = []
 train_error = []
+
+best_f1 = -1.0
+best_state = None
 
 for epoch in range(0, EPOCHS):
 
@@ -192,6 +230,19 @@ for epoch in range(0, EPOCHS):
     test_losses.append(sum(losses)/len(losses))
     test_error.extend(error)
 
+    TP, FP, TN, FN = evaluate_with_confusion(net, test_loader, device)
+    cm_acc, cm_prec, cm_rec, cm_f1 = confusion_metrics(TP, FP, TN, FN)
+    print(f"[Epoch {epoch}] CM: TP={TP} FP={FP} FN={FN} TN={TN} | "
+          f"acc={cm_acc:.3f} prec={cm_prec:.3f} rec={cm_rec:.3f} f1={cm_f1:.3f}")
+    
+    if cm_f1 > best_f1:
+        best_f1 = cm_f1
+        best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
+
     # scheduler.step()
     avg_loss = sum(losses) / len(losses)
     scheduler.step(avg_loss)
+
+weights_path = os.path.join(config["paths"]["weights"], "CNN_best.pth")
+torch.save(best_state, weights_path)
+print("Model saved to drone_model_best.pth")

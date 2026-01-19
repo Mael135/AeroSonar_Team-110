@@ -11,3 +11,4 @@ aerial_detector.egg-info/SOURCES.txt
 aerial_detector.egg-info/top_level.txt
 src/__pycache__/config.cpython-310.pyc
 src/features/__pycache__/transforms.cpython-310.pyc
+src/aerosonar/models/weights/CNN_best.pth

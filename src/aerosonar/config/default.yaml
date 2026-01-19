@@ -7,10 +7,11 @@ paths:
   data_processed: "data/processed"
   metadata_csv: "data/processed/metadata.csv"
   logs: "logs"
+  weights: "src\\aerosonar\\models\\weights"
 
 data:
   sample_rate: 22050
-  duration: 1.0  # in seconds
+  duration: 4.0  # in seconds
   mono: true
 
 spectrogram:
