@@ -7,10 +7,13 @@ src/aerosonar.egg-info/SOURCES.txt
 src/aerosonar.egg-info/dependency_links.txt
 src/aerosonar.egg-info/requires.txt
 src/aerosonar.egg-info/top_level.txt
+src/aerosonar/app/app.py
 src/aerosonar/config/default.yaml
 src/aerosonar/config/model.yaml
+src/aerosonar/data/dataset.py
 src/aerosonar/data/preprocessData.py
 src/aerosonar/features/transforms.py
+src/aerosonar/inference/inference.py
 src/aerosonar/models/spectrogramCNN.py
 src/aerosonar/models/spectrogramSVM.py
 src/aerosonar/training/trainCNN.py

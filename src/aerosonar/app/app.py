@@ -271,7 +271,7 @@ def start_inference_thread(state, config):
                 
                 # Update shared state
                 state.is_drone = (pred == 1)
-                state.confidence = probs[0][pred].item()
+                state.confidence = probs[0][1].item()
                 state.last_update = time.time()
 
 # --- 4. Streamlit UI Layout ---

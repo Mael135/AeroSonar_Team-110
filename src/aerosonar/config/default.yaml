@@ -3,11 +3,11 @@ experiment:
 
 paths:
   data_root: "data"
-  data_raw: "data/raw"
+  data_raw: "data/edited_raw"
   data_processed: "data/processed"
   metadata_csv: "data/processed/metadata.csv"
   logs: "logs"
-  weights: "src\\aerosonar\\models\\weights"
+  weights: "src/aerosonar/models/weights"
 
 data:
   sample_rate: 22050

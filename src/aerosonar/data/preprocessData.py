@@ -87,11 +87,10 @@ def parse_filename_metadata(filename: str):
             }
 
 def process_data():
-    RAW_DIR = Path("data/raw")
-    PROCESSED_DIR = Path("data/processed")
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-
     config = load_default_config()
+    RAW_DIR = Path(config["paths"]["data_raw"])
+    PROCESSED_DIR = Path(config["paths"]["data_processed"])
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     spectrogram_transform = SpectrogramTransform(config)
     
     CHUNK_DURATION = config['data']['duration']
@@ -135,6 +134,11 @@ def process_data():
             expanded_chunk_meta = meta.copy()
             expanded_chunk_meta["filename"] = out_filename
             expanded_metadata_rows.append(expanded_chunk_meta)
+    if not metadata_rows:
+        print("No chunks were produced — check that data/raw/ contains WAV files "
+              "matching the expected filename format.")
+        return
+
     df = pd.DataFrame(metadata_rows)
     cols = ['filename', 'target'] + [c for c in df.columns if c not in ['filename', 'target']]
     df = df[cols]
@@ -148,11 +152,11 @@ def process_data():
     expanded_csv_path = PROCESSED_DIR / "expanded_metadata.csv"
     expanded_df.to_csv(expanded_csv_path, index=False)
 
-
     print(f"Processing complete. Metadata saved to {csv_path}")
     print(f"Total processed chunks: {len(df)}")
 
 
-        
 
-process_data()
+
+if __name__ == "__main__":
+    process_data()
