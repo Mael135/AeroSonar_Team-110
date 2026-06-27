@@ -1,0 +1,24 @@
+file,location,is_drone,gain,claimed_sr,actual_sr,sr_mismatch,claimed_duration_s,actual_duration_s,duration_mismatch,peak_amp,clipping,rms_dbfs,silence_frac
+2025-12-15__room__no_drone__high-noise_fan__g50__22k05__5m__01.wav,room,False,50,22050,22050,False,300,300.0,False,0.0165,False,-50.4,0.999
+2025-12-15__room__no_drone__high-noise_fan__g50__22k05__5m__02.wav,room,False,50,22050,22050,False,300,300.0,False,0.0164,False,-50.4,0.999
+2025-12-15__room__no_drone__low-noise_ambience__g50__22k05__5m__01.wav,room,False,50,22050,22050,False,300,300.0,False,0.0028,False,-68.2,1.0
+2025-12-15__room__no_drone__low-noise_ambience__g50__22k05__5m__02.wav,room,False,50,22050,22050,False,300,300.0,False,0.0018,False,-68.6,1.0
+2025-12-15__room__no_drone__low-noise_rain-wind-urban-airplane__g50__22k05__20m__01.wav,room,False,50,22050,22050,False,1200,1200.0,False,0.0288,False,-63.0,1.0
+2025-12-15__room__no_drone__low-noise_rain-wind-urban-airplane__g50__22k05__20m__02.wav,room,False,50,22050,22050,False,1200,1200.0,False,0.0209,False,-64.3,1.0
+2025-12-15__room__no_drone__mid-noise_fan__g50__22k05__5m__01.wav,room,False,50,22050,22050,False,300,300.0,False,0.0792,False,-49.7,0.997
+2025-12-20__ben_shemen__drone__mid-noise_atv__g50__22k05__5m__01.wav,ben shemen,True,50,22050,22050,False,300,294.7,True,0.7091,False,-35.0,0.939
+2025-12-20__ben_shemen__drone__mid-noise_atv__g50__22k05__5m__02.wav,ben shemen,True,50,22050,22050,False,300,349.7,True,0.7077,False,-36.7,0.948
+2026-01-03__Yarkon__drone__high-noise_road__g75__22k05__5m__01.wav,Yarkon,True,75,22050,22050,False,300,307.9,True,0.4723,False,-32.5,0.472
+2026-01-03__Yarkon__drone__hign-noise_road__g50__22k05__5m__02.wav,Yarkon,True,50,22050,22050,False,300,343.3,True,0.4919,False,-32.4,0.472
+2026-01-03__Yarkon__drone__low-noise_ambience__g50__22k05__5m__01.wav,Yarkon,True,50,22050,22050,False,300,329.5,True,0.2064,False,-43.0,0.91
+2026-01-03__Yarkon__drone__low-noise_ambience__g75__22k05__5m__01.wav,Yarkon,True,75,22050,22050,False,300,318.7,True,0.3807,False,-39.4,0.897
+2026-01-03__Yarkon__no_drone__high-noise_road__g75__22k05__5m__01.wav,Yarkon,False,75,22050,22050,False,300,600.3,True,0.9627,False,-28.9,0.424
+2026-01-05__Yarkon_rosh_zipor__drone__high-noise_bike__g50__22k05__1m30__01.wav,Yarkon rosh zipor,True,50,22050,22050,False,90,79.2,True,0.2568,False,-42.1,0.906
+2026-01-05__Yarkon_rosh_zipor__drone__high-noise_bike__g50__22k05__5m__01.wav,Yarkon rosh zipor,True,50,22050,22050,False,300,325.1,True,0.0968,False,-41.9,0.823
+2026-01-05__Yarkon_rosh_zipor__drone__high-noise_helicopter-plane__g50__22k05__3m30__01.wav,Yarkon rosh zipor,True,50,22050,22050,False,210,206.2,True,0.0615,False,-51.8,0.997
+2026-01-05__Yarkon_rosh_zipor__drone__low-noise_ambience__g50__22k05__5m__01.wav,Yarkon rosh zipor,True,50,22050,22050,False,300,304.3,True,0.1752,False,-46.1,0.973
+2026-01-05__Yarkon_rosh_zipor__no_drone__high-noise_bike__g50__22k05__5m__01.wav,Yarkon rosh zipor,False,50,22050,22050,False,300,303.9,True,0.035,False,-47.2,0.97
+2026-01-05__Yarkon_rosh_zipor__no_drone__high-noise_helicopter-plane__g50__22k05__5m__01.wav,Yarkon rosh zipor,False,50,22050,22050,False,300,316.5,True,0.0365,False,-48.8,0.979
+2026-01-19__balcony__no_drone__low-noise_ambience-talking__g75__22k05__5m__01.wav,balcony,False,75,22050,22050,False,300,300.3,False,0.3318,False,-42.4,0.964
+2026-01-19__living-room__drone__low-noise_ambience__g75__22k05__5m__01.wav,living-room,True,75,22050,22050,False,300,301.6,False,0.5597,False,-36.7,0.704
+2026-01-19__living-room__no_drone__low-noise_ambience__g75__22k05__5m__01.wav,living-room,False,75,22050,22050,False,300,300.4,False,0.0292,False,-61.5,1.0

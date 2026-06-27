@@ -22,5 +22,7 @@ spectrogram:
   n_mels: 128
   f_min: 0.0
   window: "hann"
+  normalize_target_dbfs: -20.0  # RMS level each chunk is normalized to before the mel transform
+  normalize_max_gain_db: 30.0   # cap on amplification, so near-silent chunks aren't blown up
   
 

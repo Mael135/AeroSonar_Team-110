@@ -191,9 +191,12 @@ import time
 import math
 import queue
 import threading
+from pathlib import Path
+
 import numpy as np
 import torch
 import sounddevice as sd
+import soundfile as sf
 import streamlit as st
 import pydeck as pdk
 
@@ -201,12 +204,18 @@ from aerosonar.features.transforms import SpectrogramTransform
 from aerosonar.models.spectrogramCNN import SpectrogramCNN
 from aerosonar.config import load_default_config
 
+DEFAULT_DEMO_WAV = (
+    "data/edited_raw/2026-01-19__living-room__drone__low-noise_ambience__g75__22k05__5m__01.wav"
+)
+
 # --- 1. Shared State Bridge ---
 class DetectionState:
     def __init__(self):
         self.is_drone = False
         self.confidence = 0.0
         self.last_update = time.time()
+        self.audio_source = "microphone"
+        self.error = None
 
 @st.cache_resource
 def get_shared_state():
@@ -231,63 +240,137 @@ def get_wedge_polygon(lat, lon, azimuth, radius=1000, angle=30):
     coords.append([lon, lat])
     return coords
 
-# --- 3. The Inference Worker ---
-def start_inference_thread(state, config):
-    SR = config["data"]["sample_rate"]
-    DURATION = config["data"]["duration"]
-    WINDOW_SIZE = int(SR * DURATION)
-    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # Initialize Model/Transform once inside the thread
+def has_input_device() -> bool:
+    try:
+        default_in = sd.default.device[0]
+        if default_in is not None and default_in >= 0:
+            return True
+        return any(d["max_input_channels"] > 0 for d in sd.query_devices())
+    except sd.PortAudioError:
+        return False
+
+def load_inference_model(config, device):
     transform = SpectrogramTransform(config)
-    transform.mel_spectrogram = transform.mel_spectrogram.to(DEVICE)
-    transform.amplitude_to_db = transform.amplitude_to_db.to(DEVICE)
-    
-    model = SpectrogramCNN().to(DEVICE)
+    transform.mel_spectrogram = transform.mel_spectrogram.to(device)
+    transform.amplitude_to_db = transform.amplitude_to_db.to(device)
+
+    model = SpectrogramCNN().to(device)
     weights_path = os.path.join(config["paths"]["weights"], "CNN_best.pth")
-    model.load_state_dict(torch.load(weights_path, map_location=DEVICE))
+    model.load_state_dict(torch.load(weights_path, map_location=device, weights_only=True))
     model.eval()
+    return transform, model
+
+def run_inference_step(state, transform, model, device, buffer):
+    audio_tensor = torch.from_numpy(buffer).float().to(device)
+    with torch.no_grad():
+        spec = transform(audio_tensor.unsqueeze(0)).unsqueeze(0)
+        logits = model(spec)
+        probs = torch.softmax(logits, dim=1)
+        pred = torch.argmax(probs, dim=1).item()
+
+        state.is_drone = (pred == 1)
+        state.confidence = probs[0][1].item()
+        state.last_update = time.time()
+
+def drain_audio_queue(buffer, audio_q):
+    while not audio_q.empty():
+        data = audio_q.get()
+        n = len(data)
+        buffer[:] = np.roll(buffer, -n)
+        buffer[-n:] = data.flatten()
+
+def start_microphone_thread(state, config):
+    sr = config["data"]["sample_rate"]
+    window_size = int(sr * config["data"]["duration"])
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    transform, model = load_inference_model(config, device)
 
     audio_q = queue.Queue()
-    buffer = np.zeros(WINDOW_SIZE)
+    buffer = np.zeros(window_size)
 
-    def audio_callback(indata, frames, time, status):
+    def audio_callback(indata, frames, time_info, status):
         audio_q.put(indata.copy())
 
-    with sd.InputStream(channels=1, samplerate=SR, callback=audio_callback):
+    state.audio_source = "microphone"
+    with sd.InputStream(channels=1, samplerate=sr, callback=audio_callback):
         while True:
-            while not audio_q.empty():
-                data = audio_q.get()
-                buffer = np.roll(buffer, -len(data))
-                buffer[-len(data):] = data.flatten()
+            drain_audio_queue(buffer, audio_q)
+            run_inference_step(state, transform, model, device, buffer)
+            time.sleep(0.05)
 
-            audio_tensor = torch.from_numpy(buffer).float().to(DEVICE)
-            with torch.no_grad():
-                input_signal = audio_tensor.unsqueeze(0)
-                spec = transform(input_signal).unsqueeze(0)
-                logits = model(spec)
-                probs = torch.softmax(logits, dim=1)
-                pred = torch.argmax(probs, dim=1).item()
-                
-                # Update shared state
-                state.is_drone = (pred == 1)
-                state.confidence = probs[0][1].item()
-                state.last_update = time.time()
+def start_file_thread(state, config, wav_path: str):
+    sr = config["data"]["sample_rate"]
+    window_size = int(sr * config["data"]["duration"])
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    transform, model = load_inference_model(config, device)
+
+    audio, file_sr = sf.read(wav_path, dtype="float32", always_2d=True)
+    audio = audio.mean(axis=1)
+    if file_sr != sr:
+        import librosa
+        audio = librosa.resample(audio, orig_sr=file_sr, target_sr=sr)
+
+    buffer = np.zeros(window_size)
+    offset = 0
+    chunk_size = max(1, window_size // 10)
+    state.audio_source = f"file: {Path(wav_path).name}"
+
+    while True:
+        end = offset + chunk_size
+        if end >= len(audio):
+            chunk = audio[offset:]
+            offset = 0
+        else:
+            chunk = audio[offset:end]
+            offset = end
+
+        n = len(chunk)
+        buffer[:] = np.roll(buffer, -n)
+        buffer[-n:] = chunk
+        run_inference_step(state, transform, model, device, buffer)
+        time.sleep(0.05)
+
+def start_inference_thread(state, config, demo_wav: str):
+    try:
+        if has_input_device():
+            start_microphone_thread(state, config)
+        else:
+            start_file_thread(state, config, demo_wav)
+    except Exception as exc:
+        state.error = str(exc)
+        raise
 
 # --- 4. Streamlit UI Layout ---
 st.set_page_config(layout="wide", page_title="Drone Detector Live")
 config = load_default_config()
 state = get_shared_state()
 
+demo_wav = os.environ.get("AEROSONAR_DEMO_WAV", DEFAULT_DEMO_WAV)
+
 # Start background thread once
 if "inference_running" not in st.session_state:
-    threading.Thread(target=start_inference_thread, args=(state, config), daemon=True).start()
+    if not has_input_device():
+        st.session_state.using_demo_audio = True
+    threading.Thread(
+        target=start_inference_thread,
+        args=(state, config, demo_wav),
+        daemon=True,
+    ).start()
     st.session_state.inference_running = True
 
 st.title("Aerial Detector - Live Surveillance")
 
+if st.session_state.get("using_demo_audio"):
+    st.warning(
+        "No microphone found (common on WSL). Running in demo mode using "
+        f"`{demo_wav}`. Set `AEROSONAR_DEMO_WAV` to use another file."
+    )
+if state.error:
+    st.error(f"Inference error: {state.error}")
+
 # Sidebar Controls
 st.sidebar.header("Device Configuration")
+st.sidebar.caption(f"Audio source: {state.audio_source}")
 lat_input = st.sidebar.number_input("Latitude", value=31.7780, format="%.6f")
 lon_input = st.sidebar.number_input("Longitude", value=35.2350, format="%.6f")
 azimuth_input = st.sidebar.slider("Azimuth (Heading)", 0, 360, 0)

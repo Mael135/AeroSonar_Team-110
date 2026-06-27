@@ -30,7 +30,9 @@ class SpectrogramTransform:
         self.window_fn =                windows[spec_config.get("window", "hann")]
         self.power : float =            spec_config.get("power", 2.0)
         self.eps: float =               spec_config.get("eps", 1e-10)
-        
+        self.target_dbfs: float =       spec_config.get("normalize_target_dbfs", -20.0)
+        self.max_gain_db: float =       spec_config.get("normalize_max_gain_db", 30.0)
+
         self.amplitude_to_db = torchaudio.transforms.AmplitudeToDB()
         self.mel_spectrogram = torchaudio.transforms.MelSpectrogram(
             sample_rate =   self.sample_rate,
@@ -49,7 +51,19 @@ class SpectrogramTransform:
             mel_scale =     "htk"
         )
 
+    def _normalize_loudness(self, waveform: torch.Tensor) -> torch.Tensor:
+        # Make the spectrogram's absolute level reflect spectral shape rather than
+        # mic gain / source distance: scale each chunk to a fixed RMS (dBFS) before
+        # the mel transform. Gain is capped so near-silent chunks aren't blown up
+        # into amplified noise floor.
+        rms = waveform.pow(2).mean(dim=-1, keepdim=True).sqrt().clamp_min(self.eps)
+        target_rms = 10 ** (self.target_dbfs / 20.0)
+        max_gain = 10 ** (self.max_gain_db / 20.0)
+        gain = (target_rms / rms).clamp_max(max_gain)
+        return waveform * gain
+
     def __call__(self, waveform):
+        waveform = self._normalize_loudness(waveform)
         mel_spec = self.mel_spectrogram(waveform)
         db_mel_spec = self.amplitude_to_db(mel_spec)
         return db_mel_spec
