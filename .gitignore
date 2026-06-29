@@ -2,6 +2,8 @@
 /data/playground/**
 /data/raw/
 /data/raw/**
+/data/
+/data/processed
 
 pyproject.toml
 .gitignore
