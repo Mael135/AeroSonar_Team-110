@@ -18,3 +18,4 @@ src/aerosonar/models/spectrogramCNN.py
 src/aerosonar/models/spectrogramSVM.py
 src/aerosonar/training/trainCNN.py
 src/aerosonar/training/trainSVM.py
+src/aerosonar/utils/audit.py

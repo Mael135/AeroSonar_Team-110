@@ -1,1 +1,7 @@
 aerosonar
+data
+features
+inference
+models
+training
+utils
