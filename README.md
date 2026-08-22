@@ -1,5 +1,4 @@
 # 💡 AeroSonar: Acoustic UAV Detection and Localization Pipeline
-Use this template to describe and document your engineering project.
 
 <!-- cool project cover image -->
 ![Project Cover Image](/media/AeroSonar_cover.jpeg)
