@@ -108,30 +108,6 @@ With the firmware running, add `doa_res.azimuth_deg` and `doa_res.confidence`
 to Live Expressions. Broadband noise near the array produces a non-zero
 confidence ratio and a bearing that follows the source.
 
-***Detection pipeline***
-
-**1. Preprocess.** Segments the raw recordings in `data/final_raw/` into one-second
-chunks, converts each to a loudness-normalised decibel mel spectrogram, and writes them
-to `data/processed/` along with `metadata.csv` and `expanded_metadata.csv`. Re-run this
-whenever the `data` or `spectrogram` settings in `default.yaml` change.
-
-```bash
-python -m aerosonar.data.preprocessData
-```
-
-**2. Train.** Trains the CNN on a label-stratified, recording-level train/validation/test
-split. Validation drives checkpoint selection and threshold tuning; the test split is
-never read during training. Writes `CNN_best.pth` and `threshold.yaml` to
-`src/aerosonar/models/weights/`, the per-epoch history to `reports/eval/train_history.csv`,
-and figures to `graphs/`.
-
-```bash
-python -m aerosonar.training.trainCNN
-```
-
-**3. Inference.**
-For live detection from a microphone, run `python -m aerosonar.inference.inference`.
-
 ## 🧪 Testing
 
 Tests run on the target and report through instrumentation variables, read in
@@ -158,20 +134,29 @@ the array geometry, requiring no acoustic input.
 `ch_dc[]` and `ch_pp[]` confirm every channel is biased and responsive;
 `doa_overruns` must stay at zero, and `doa_cycles` reports the per-frame cost.
 
-**Detection.** Evaluation on the held-out set reports the operating point
-selected by a post-hoc threshold sweep.
+**Detection.** 
 
-    python -m aerosonar.evaluate --checkpoint CNN_best.pth
-    
-    threshold 0.90   precision 0.969   recall 0.777   F1 0.862
+**1. Preprocess.** Segments the raw recordings in `data/final_raw/` into one-second
+chunks, converts each to a loudness-normalised decibel mel spectrogram, and writes them
+to `data/processed/` along with `metadata.csv` and `expanded_metadata.csv`. Re-run this
+whenever the `data` or `spectrogram` settings in `default.yaml` change.
 
-Per-frame and per-event recall are reported separately. Majority voting across
-a rolling window converts independent per-frame errors into far fewer missed
-events, and the gap between the two quantifies what the smoothing contributes.
+```bash
+python -m aerosonar.data.preprocessData
+```
 
-A parity check asserts that the inference script's feature extraction matches
-the training pipeline for identical input, guarding against silent divergence
-in windowing or normalisation.
+**2. Train.** Trains the CNN on a label-stratified, recording-level train/validation/test
+split. Validation drives checkpoint selection and threshold tuning; the test split is
+never read during training. Writes `CNN_best.pth` and `threshold.yaml` to
+`src/aerosonar/models/weights/`, the per-epoch history to `reports/eval/train_history.csv`,
+and figures to `graphs/`.
+
+```bash
+python -m aerosonar.training.trainCNN
+```
+
+**3. Inference.**
+For live detection from a microphone, run `python -m aerosonar.inference.inference`.
 
 ## 🚀 Deployment
 
