@@ -78,10 +78,10 @@ your local machine for development and testing purposes.
 Clone the repository
 
     git clone https://github.com/Mael135/AeroSonar_Team-110.git
-    cd aerosonar
+    cd AeroSonar_Team-110
 
 Open the firmware in STM32CubeIDE via `File → Open Projects from File System`,
-selecting `embedded/`. Build with optimisation enabled; the default debug
+selecting `STM32/`. Build with optimisation enabled; the default debug
 configuration runs roughly 2.8× slower.
 
 Wire each capsule through a 2.2 kΩ resistor to 3.3 V, connecting the junction
