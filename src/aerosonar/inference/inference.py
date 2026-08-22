@@ -1,3 +1,13 @@
+"""Live drone detection from a microphone input stream.
+
+Captures audio into a rolling one-second window, converts each window to a mel
+spectrogram, classifies it with the trained CNN, and prints the running detection
+state. Requires the optional ``sounddevice`` dependency and an available input device.
+
+Run from the repository root::
+
+    python -m aerosonar.inference.inference
+"""
 import os
 import queue
 import torch
@@ -6,11 +16,21 @@ import sounddevice as sd
 import yaml
 from pathlib import Path
 from aerosonar.features.transforms import SpectrogramTransform
+from aerosonar.inference.streaming import push_frame
 from aerosonar.models.spectrogramCNN import SpectrogramCNN
 from aerosonar.config import load_default_config
 
 
 def load_threshold(weights_dir: Path, default: float = 0.5) -> float:
+    """Read the tuned detection threshold saved alongside the model weights.
+
+    Args:
+        weights_dir: Directory expected to contain ``threshold.yaml``.
+        default: Value returned when the file is absent or lacks the key.
+
+    Returns:
+        float: The detection threshold to apply to the drone probability.
+    """
     thresh_path = weights_dir / "threshold.yaml"
     if thresh_path.exists():
         with open(thresh_path) as f:
@@ -19,6 +39,15 @@ def load_threshold(weights_dir: Path, default: float = 0.5) -> float:
 
 
 def run_inference():
+    """Run the live detection loop until interrupted.
+
+    Opens an input stream on the default audio device, maintains a rolling window of
+    the most recent second of audio, and continuously reports the drone probability
+    and the resulting detection decision. Blocks until the process is interrupted.
+
+    The audio device is not specified explicitly, so capture uses the operating-system
+    default. Detection behaviour depends on the microphone and gain chain in use.
+    """
     config = load_default_config()
 
     SR          = config["data"]["sample_rate"]
@@ -44,6 +73,7 @@ def run_inference():
     samples_received = 0
 
     def audio_callback(indata, frames, time_info, status):
+        """Hand captured samples to the main loop. Runs on the audio thread."""
         if status:
             print(status)
         audio_q.put(indata.copy())
@@ -53,10 +83,8 @@ def run_inference():
         while True:
             while not audio_q.empty():
                 data = audio_q.get()
-                n = len(data)
-                buffer[-n:] = np.roll(buffer, -n)[-n:]
-                buffer[-n:] = data.flatten()
-                samples_received += n
+                push_frame(buffer, data)
+                samples_received += len(data)
 
             # Skip inference until the buffer has filled at least once
             if samples_received < WINDOW_SIZE:

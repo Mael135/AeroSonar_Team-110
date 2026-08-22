@@ -15,3 +15,4 @@ src/__pycache__/config.cpython-310.pyc
 src/features/__pycache__/transforms.cpython-310.pyc
 src/aerosonar.egg-info
 src/aerosonar/__pycache__
+/reports

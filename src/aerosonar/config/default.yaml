@@ -3,7 +3,7 @@ experiment:
 
 paths:
   data_root: "data"
-  data_raw: "data/edited_raw"
+  data_raw: "data/final_raw"
   data_processed: "data/processed"
   metadata_csv: "data/processed/metadata.csv"
   logs: "logs"
@@ -11,18 +11,50 @@ paths:
 
 data:
   sample_rate: 22050
-  duration: 4.0  # in seconds
+  duration: 1.0  # in seconds
   mono: true
+  # Recording-level, label-stratified three-way split. Chunks from one WAV never cross
+  # splits. The threshold is tuned on val so test stays an untouched generalization estimate.
+  seed: 42
+  train_part: 0.70
+  val_part: 0.15   # test gets the remainder
 
 spectrogram:
   sample_rate: 22050
-  n_fft: 2048
-  win_length: 2048
+  n_fft: 1024
+  win_length: 1024
   hop_length: 512
   n_mels: 128
-  f_min: 0.0
+  f_min: 100.0
+  f_max: 10000.0
+  pad: 0
   window: "hann"
+  power: 2.0
+  eps: 1.0e-10
   normalize_target_dbfs: -20.0  # RMS level each chunk is normalized to before the mel transform
   normalize_max_gain_db: 30.0   # cap on amplification, so near-silent chunks aren't blown up
-  
 
+training:
+  lr: 0.00001
+  epochs: 20
+  batch_size: 64
+  class_weights: [0.8, 1.2]  # upweight drone (minority class)
+
+# Knobs for the verification & evaluation suite (python -m aerosonar.evaluation.runAll).
+evaluation:
+  reports_dir: "reports/eval"
+  graphs_dir: "graphs"
+  latency_budget_ms: 41.0   # STM32 frame budget the PC side must beat (external requirement)
+  latency_runs: 1000
+  latency_warmup: 50
+  overfit_epochs: 200
+  overfit_batch_size: 10
+  overfit_lr: 0.001         # deliberately NOT the production lr: this is a gradient-flow
+                            # sanity check, and 1e-5 cannot memorise a batch in 200 epochs
+  continuity_minutes: 5.0
+  continuity_block_ms: 23.2  # one hop_length of audio per simulated stream callback
+  # Swept well past 0 dB: the model keeps detecting far below it, and the range has to
+  # reach the point where it stops for the operating floor to be measurable at all.
+  snr_db_levels: [20, 15, 10, 5, 0, -5, -10, -15, -20, -25, -30]
+  snr_noise_seeds: 5
+  snr_num_clips: 8

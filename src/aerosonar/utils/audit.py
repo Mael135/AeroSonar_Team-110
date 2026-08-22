@@ -1,7 +1,28 @@
-# Diagnostic sweep over the raw audio, processed dataset, and trained model —
-# built to surface dataset confounds (location/label shortcuts), label noise
-# (drone-labeled chunks with no drone actually audible), and model error
-# concentration (which sessions drive precision/recall) without retraining.
+"""Diagnostic sweep over the raw audio, processed dataset and trained model.
+
+Surfaces the dataset problems that ordinary metrics hide: correlations that let the model
+shortcut the task, chunks labelled as containing a drone that may not, and error
+concentration within particular recordings.
+
+Six sections run in sequence, writing per-chunk CSVs to ``reports/audit/``:
+
+1. Raw audio checks: clipping, duration and sample-rate consistency against the filename.
+2. Dataset composition, including location-by-label crosstabs and detection of
+   single-class locations.
+3. The train/validation/test split against location, using the splitter from
+   :mod:`aerosonar.data.dataset` rather than a second copy of that logic.
+4. Spectrogram level statistics against recording gain, which shows whether loudness
+   normalisation is equalising real recordings.
+5. Chunk-level drone-presence heuristics, which flag weak candidates for an audible drone
+   among the drone-labelled chunks.
+6. The trained model's per-chunk and per-location predictions.
+
+Worth re-running after any retrain.
+
+Run from the repository root::
+
+    python -m aerosonar.utils.audit
+"""
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +33,7 @@ import torchaudio.functional as AF
 import yaml
 
 from aerosonar.config import load_default_config
+from aerosonar.data.dataset import split_file_ids
 from aerosonar.data.preprocessData import parse_filename_metadata
 from aerosonar.models.spectrogramCNN import SpectrogramCNN
 
@@ -19,6 +41,11 @@ REPORT_DIR = Path("reports/audit")
 
 
 def section(title):
+    """Print a numbered section banner.
+
+    Args:
+        title: Heading text.
+    """
     print("\n" + "=" * 88)
     print(title)
     print("=" * 88)
@@ -29,6 +56,17 @@ def section(title):
 # ---------------------------------------------------------------------------
 
 def audit_raw_audio(config):
+    """Check every raw recording against its filename metadata and for clipping.
+
+    Compares the actual sample rate and duration with the values encoded in the
+    filename, and measures peak level, RMS and the fraction of near-silent samples.
+
+    Args:
+        config: Project configuration.
+
+    Returns:
+        pandas.DataFrame: One row per file, also written to ``raw_audio_audit.csv``.
+    """
     section("1. RAW AUDIO FILES")
     raw_dir = Path(config["paths"]["data_raw"])
     files = sorted(raw_dir.rglob("*.wav"))
@@ -79,6 +117,14 @@ def audit_raw_audio(config):
 # ---------------------------------------------------------------------------
 
 def load_joined_metadata(config):
+    """Load the chunk metadata joined with the parsed filename fields.
+
+    Args:
+        config: Project configuration.
+
+    Returns:
+        pandas.DataFrame: ``metadata.csv`` merged with ``expanded_metadata.csv``.
+    """
     processed_dir = Path(config["paths"]["data_processed"])
     meta = pd.read_csv(processed_dir / "metadata.csv")
     expanded = pd.read_csv(processed_dir / "expanded_metadata.csv")
@@ -86,6 +132,17 @@ def load_joined_metadata(config):
 
 
 def audit_dataset_composition(joined):
+    """Report class balance and cross-tabulate label against recording conditions.
+
+    A location, noise type or gain setting appearing with only one class allows the
+    model to predict the label from that attribute alone rather than from the audio.
+
+    Args:
+        joined: Metadata from :func:`load_joined_metadata`.
+
+    Returns:
+        list: Locations represented by a single class.
+    """
     section("2. DATASET COMPOSITION & LOCATION/LABEL CONFOUND")
 
     n_recordings = joined["file_id"].nunique()
@@ -112,33 +169,55 @@ def audit_dataset_composition(joined):
 
 
 # ---------------------------------------------------------------------------
-# 3. Train/test split vs location (replicates the seed=42 split in dataset.py)
+# 3. Train/val/test split vs location
 # ---------------------------------------------------------------------------
 
-def replicate_split(joined, train_part=0.8):
-    unique_file_ids = joined["file_id"].unique()
-    np.random.seed(42)
-    np.random.shuffle(unique_file_ids)
-    train_count = int(train_part * len(unique_file_ids))
-    train_ids = set(unique_file_ids[:train_count])
-    return joined["file_id"].apply(lambda x: "train" if x in train_ids else "test")
+def replicate_split(joined):
+    """Label each chunk with the split it belongs to.
+
+    Uses the splitter from :mod:`aerosonar.data.dataset` rather than re-deriving it,
+    since a second copy of that logic would silently go stale.
+
+    Args:
+        joined: Metadata with a ``file_id`` column.
+
+    Returns:
+        pandas.Series: Split name per row.
+    """
+    train_ids, val_ids, test_ids = split_file_ids(joined)
+    lookup = {"train": train_ids, "val": val_ids, "test": test_ids}
+    return joined["file_id"].apply(
+        lambda x: next(name for name, ids in lookup.items() if x in ids)
+    )
 
 
 def audit_split_confound(joined):
-    section("3. TRAIN/TEST SPLIT vs LOCATION (replicated seed=42 split from dataset.py)")
+    """Report how locations are distributed across the splits.
+
+    Warns where a location appears only in a held-out split, meaning it was never seen
+    in training, or only in training, meaning generalization there is never checked.
+
+    Args:
+        joined: Metadata from :func:`load_joined_metadata`.
+
+    Returns:
+        pandas.DataFrame: The metadata with an added ``split`` column.
+    """
+    section("3. TRAIN/VAL/TEST SPLIT vs LOCATION (split imported from dataset.py)")
     joined = joined.copy()
     joined["split"] = replicate_split(joined)
     rec_level = joined.drop_duplicates("file_id")[["file_id", "location", "target", "split"]]
     print(rec_level.groupby(["split", "location"])["target"].agg(["count", "mean"]).to_string())
 
-    test_locations = set(rec_level[rec_level.split == "test"]["location"])
     train_locations = set(rec_level[rec_level.split == "train"]["location"])
-    only_in_test = test_locations - train_locations
-    only_in_train = train_locations - test_locations
-    if only_in_test:
-        print(f"\n  WARNING: locations ONLY in test set (test never exercised in training): {only_in_test}")
+    for held_out in ("val", "test"):
+        locations = set(rec_level[rec_level.split == held_out]["location"])
+        only_here = locations - train_locations
+        if only_here:
+            print(f"\n  WARNING: locations ONLY in {held_out} (never exercised in training): {only_here}")
+    only_in_train = train_locations - set(rec_level[rec_level.split != "train"]["location"])
     if only_in_train:
-        print(f"  WARNING: locations ONLY in train set (test never validates generalization here): {only_in_train}")
+        print(f"  WARNING: locations ONLY in train (generalization there is never validated): {only_in_train}")
     return joined
 
 
@@ -147,6 +226,20 @@ def audit_split_confound(joined):
 # ---------------------------------------------------------------------------
 
 def audit_spectrogram_levels(joined, config):
+    """Compare spectrogram levels across recording gain settings.
+
+    If loudness normalisation is working, mean level should be close across gains.
+    A persistent spread suggests clipping or noise-floor effects that normalisation
+    cannot remove.
+
+    Args:
+        joined: Metadata from :func:`load_joined_metadata`.
+        config: Project configuration.
+
+    Returns:
+        pandas.DataFrame: Per-chunk level statistics, also written to
+        ``spectrogram_levels.csv``.
+    """
     section("4. SPECTROGRAM LEVEL STATS (post-normalization) vs RECORDING GAIN")
     processed_dir = Path(config["paths"]["data_processed"])
     rows = []
@@ -177,6 +270,18 @@ def audit_spectrogram_levels(joined, config):
 # ---------------------------------------------------------------------------
 
 def _sfm_p10(spec_db):
+    """Return the 10th percentile of per-frame spectral flatness.
+
+    Tonal content such as rotor harmonics lowers flatness; broadband noise keeps it near
+    one. The low percentile is used because a distant drone is tonal in only a minority
+    of frames.
+
+    Args:
+        spec_db: Decibel spectrogram of shape ``(freq_bins, frames)``.
+
+    Returns:
+        float: The percentile value.
+    """
     amp = AF.DB_to_amplitude(spec_db, ref=1.0, power=2.0)
     eps = 1e-10
     log_spec = torch.log(amp + eps)
@@ -187,15 +292,51 @@ def _sfm_p10(spec_db):
 
 
 def _prominence_db(spec_db):
+    """Return the decibel gap between the loudest and the median bin.
+
+    Acts as a signal-to-noise proxy for a distinct source standing out of the
+    background.
+
+    Args:
+        spec_db: Decibel spectrogram.
+
+    Returns:
+        float: The difference in decibels.
+    """
     return (spec_db.max() - spec_db.median()).item()
 
 
 def _time_energy_variance(spec_db):
+    """Return the variance of frame energy over time.
+
+    High variance indicates a transient rather than a sustained source.
+
+    Args:
+        spec_db: Decibel spectrogram.
+
+    Returns:
+        float: The variance.
+    """
     time_energy = torch.mean(spec_db, dim=0)
     return torch.var(time_energy).item()
 
 
 def audit_chunk_presence(joined, config):
+    """Flag drone-labelled chunks that may not contain an audible drone.
+
+    Whole-file labelling assumes a drone is audible throughout a recording. This applies
+    three signal heuristics per chunk and lists the weakest tenth of drone-labelled
+    chunks by prominence as candidates for review.
+
+    Args:
+        joined: Metadata from :func:`load_joined_metadata`.
+        config: Project configuration.
+
+    Returns:
+        pandas.DataFrame: Per-chunk heuristics, also written to
+        ``presence_heuristics.csv``, with the flagged subset in
+        ``suspect_mislabeled_drone_chunks.csv``.
+    """
     section("5. CHUNK-LEVEL DRONE-PRESENCE HEURISTICS (catches mislabeled/silent chunks)")
     processed_dir = Path(config["paths"]["data_processed"])
     rows = []
@@ -229,6 +370,19 @@ def audit_chunk_presence(joined, config):
 # ---------------------------------------------------------------------------
 
 def _confusion(df, pred_col, target_col="target"):
+    """Compute confusion counts and derived metrics for a set of rows.
+
+    Metrics whose denominator is zero are returned as NaN, which keeps single-class
+    groups distinguishable from genuine zeros.
+
+    Args:
+        df: Rows to evaluate.
+        pred_col: Column holding the binary prediction.
+        target_col: Column holding the ground-truth label.
+
+    Returns:
+        dict: The four counts, the row total, accuracy, precision, recall and F1.
+    """
     TP = int(((df[pred_col] == 1) & (df[target_col] == 1)).sum())
     TN = int(((df[pred_col] == 0) & (df[target_col] == 0)).sum())
     FP = int(((df[pred_col] == 1) & (df[target_col] == 0)).sum())
@@ -242,11 +396,37 @@ def _confusion(df, pred_col, target_col="target"):
 
 
 def _fmt(c):
+    """Format a confusion dictionary as a single aligned line.
+
+    Args:
+        c: A record from :func:`_confusion`.
+
+    Returns:
+        str: The formatted line.
+    """
     return (f"n={c['n']:4d}  TP={c['TP']:3d} FP={c['FP']:3d} FN={c['FN']:3d} TN={c['TN']:3d}  "
             f"acc={c['acc']:.3f} prec={c['prec']:.3f} rec={c['rec']:.3f} f1={c['f1']:.3f}")
 
 
 def audit_model_predictions(joined, config, device, presence_df=None):
+    """Score every chunk and report where the model's errors concentrate.
+
+    Reports the confusion matrix per held-out split at both the neutral and the tuned
+    threshold, breaks the test split down by location, and lists false negatives by
+    recording. Where presence heuristics are supplied, indicates how many false
+    negatives also look weak on signal grounds, which points to label noise rather than
+    a model failure.
+
+    Args:
+        joined: Metadata from :func:`load_joined_metadata`.
+        config: Project configuration.
+        device: Compute device.
+        presence_df: Optional output of :func:`audit_chunk_presence`.
+
+    Returns:
+        pandas.DataFrame | None: The metadata with prediction columns added, also
+        written to ``chunk_predictions.csv``. None if no trained weights exist.
+    """
     section("6. TRAINED MODEL — PER-CHUNK PREDICTIONS & ERROR CONCENTRATION")
     processed_dir = Path(config["paths"]["data_processed"])
     weights_dir = Path(config["paths"]["weights"])
@@ -285,11 +465,14 @@ def audit_model_predictions(joined, config, device, presence_df=None):
     joined["pred_tuned"] = (joined["prob"] > tuned_threshold).astype(int)
     joined.to_csv(REPORT_DIR / "chunk_predictions.csv", index=False)
 
-    test_df = joined[joined.split == "test"]
-    print(f"Test split: {len(test_df)} chunks from {test_df['file_id'].nunique()} recordings.")
-    print(f"  @ threshold=0.50          : {_fmt(_confusion(test_df, 'pred_05'))}")
-    print(f"  @ tuned threshold={tuned_threshold:.2f}     : {_fmt(_confusion(test_df, 'pred_tuned'))}")
+    for split_name in ("val", "test"):
+        split_df = joined[joined.split == split_name]
+        print(f"\n{split_name.upper()} split: {len(split_df)} chunks from "
+              f"{split_df['file_id'].nunique()} recordings.")
+        print(f"  @ threshold=0.50          : {_fmt(_confusion(split_df, 'pred_05'))}")
+        print(f"  @ tuned threshold={tuned_threshold:.2f}     : {_fmt(_confusion(split_df, 'pred_tuned'))}")
 
+    test_df = joined[joined.split == "test"]
     print("\nPer-location breakdown on test split (tuned threshold) — look for locations driving all the errors or all the precision:")
     for loc, g in test_df.groupby("location"):
         print(f"  {loc:25s} {_fmt(_confusion(g, 'pred_tuned'))}")
@@ -314,6 +497,7 @@ def audit_model_predictions(joined, config, device, presence_df=None):
 # ---------------------------------------------------------------------------
 
 def main():
+    """Run every audit section in order and print a summary of the red flags."""
     config = load_default_config()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

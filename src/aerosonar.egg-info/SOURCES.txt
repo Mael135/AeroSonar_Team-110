@@ -9,7 +9,6 @@ src/aerosonar.egg-info/requires.txt
 src/aerosonar.egg-info/top_level.txt
 src/aerosonar/app/app.py
 src/aerosonar/config/default.yaml
-src/aerosonar/config/model.yaml
 src/aerosonar/data/dataset.py
 src/aerosonar/data/preprocessData.py
 src/aerosonar/features/transforms.py

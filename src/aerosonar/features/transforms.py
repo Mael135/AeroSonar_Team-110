@@ -1,3 +1,8 @@
+"""Waveform-to-spectrogram feature extraction.
+
+Defines the single transform used by preprocessing, training and live inference, so
+that all three see identically scaled inputs.
+"""
 import numpy as np
 from aerosonar.config import load_and_merge_configs
 from typing import Optional
@@ -15,7 +20,30 @@ windows = {
 
 
 class SpectrogramTransform:
+    """Converts a waveform into a loudness-normalised decibel mel spectrogram.
+
+    The transform is configured entirely from the project config, reading the ``data``
+    section for the sample rate and clip duration and the ``spectrogram`` section for
+    the mel parameters.
+
+    Call the instance to run the full chain: loudness normalisation, mel spectrogram,
+    then amplitude-to-decibel conversion.
+
+    Attributes:
+        mel_spectrogram: The underlying ``torchaudio`` mel transform. Exposed so
+            callers can move it to a specific device.
+        amplitude_to_db: The decibel conversion module, likewise movable.
+        target_dbfs: RMS level each clip is normalised to.
+        max_gain_db: Ceiling on the normalisation gain.
+    """
+
     def __init__(self, config):
+        """Build the transform from a configuration dictionary.
+
+        Args:
+            config: Full project configuration, containing ``data`` and
+                ``spectrogram`` sections.
+        """
         data_config = config["data"]
         spec_config = config["spectrogram"]
         self.duration: int =            data_config.get("duration", None)
@@ -43,7 +71,7 @@ class SpectrogramTransform:
             f_max =         self.f_max,
             pad =           self.pad,
             n_mels =        self.n_mels,
-            window_fn =     self.window_fn, 
+            window_fn =     self.window_fn,
             power =         self.power,
             center =        True,
             pad_mode =      "reflect",
@@ -52,10 +80,19 @@ class SpectrogramTransform:
         )
 
     def _normalize_loudness(self, waveform: torch.Tensor) -> torch.Tensor:
-        # Make the spectrogram's absolute level reflect spectral shape rather than
-        # mic gain / source distance: scale each chunk to a fixed RMS (dBFS) before
-        # the mel transform. Gain is capped so near-silent chunks aren't blown up
-        # into amplified noise floor.
+        """Scale a waveform to a fixed RMS level.
+
+        Without this step the spectrogram's absolute level encodes microphone gain,
+        operating-system input volume and source distance rather than spectral
+        content. Gain is capped at ``max_gain_db`` so that near-silent clips are not
+        amplified into noise.
+
+        Args:
+            waveform: Shape ``(channels, samples)``. RMS is computed per channel.
+
+        Returns:
+            torch.Tensor: The rescaled waveform, same shape as the input.
+        """
         rms = waveform.pow(2).mean(dim=-1, keepdim=True).sqrt().clamp_min(self.eps)
         target_rms = 10 ** (self.target_dbfs / 20.0)
         max_gain = 10 ** (self.max_gain_db / 20.0)
@@ -63,6 +100,16 @@ class SpectrogramTransform:
         return waveform * gain
 
     def __call__(self, waveform):
+        """Run the full feature-extraction chain.
+
+        Args:
+            waveform: Shape ``(channels, samples)``.
+
+        Returns:
+            torch.Tensor: Decibel mel spectrogram of shape
+            ``(channels, n_mels, frames)``, where ``frames`` is
+            ``samples // hop_length + 1`` for the centred STFT.
+        """
         waveform = self._normalize_loudness(waveform)
         mel_spec = self.mel_spectrogram(waveform)
         db_mel_spec = self.amplitude_to_db(mel_spec)

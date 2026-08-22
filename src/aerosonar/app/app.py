@@ -1,191 +1,23 @@
-# import os
-# import math
-# import numpy as np
-# import streamlit as st
-# import pydeck as pdk
+"""Streamlit dashboard for live drone detection.
 
-# # -------------------------
-# # Geometry helpers
-# # -------------------------
+Runs inference on a background thread while the interface renders the current detection
+state over a map. Audio comes from the microphone where one is available, falling back to
+a looped WAV file so the dashboard remains demonstrable on hosts without an input device.
 
-# EARTH_RADIUS_M = 6371000.0
+Requires the optional ``live`` dependencies (``streamlit``, ``sounddevice``, ``pydeck``).
+A ``MAPBOX_TOKEN`` environment variable is needed for the map basemap, and
+``AEROSONAR_DEMO_WAV`` overrides the fallback audio file.
 
-# def wrap_deg(x: float) -> float:
-#     x = x % 360.0
-#     return x + 360.0 if x < 0 else x
+Note:
+    :func:`run_inference_step` decides using ``argmax``, an implicit threshold of 0.5,
+    and does not read the tuned value from ``threshold.yaml`` that
+    :mod:`aerosonar.inference.inference` applies. The two runtimes will therefore
+    disagree on any sample scoring between 0.5 and the tuned threshold.
 
-# def destination_point(lat_deg: float, lon_deg: float, bearing_deg: float, distance_m: float):
-#     """
-#     Great-circle destination point given start lat/lon, bearing, distance.
-#     Returns (lat, lon) in degrees.
-#     """
-#     lat1 = math.radians(lat_deg)
-#     lon1 = math.radians(lon_deg)
-#     brng = math.radians(bearing_deg)
-#     dr = distance_m / EARTH_RADIUS_M
+Run from the repository root::
 
-#     lat2 = math.asin(math.sin(lat1) * math.cos(dr) + math.cos(lat1) * math.sin(dr) * math.cos(brng))
-#     lon2 = lon1 + math.atan2(
-#         math.sin(brng) * math.sin(dr) * math.cos(lat1),
-#         math.cos(dr) - math.sin(lat1) * math.sin(lat2)
-#     )
-
-#     return math.degrees(lat2), math.degrees(lon2)
-
-# def circle_polygon(lat: float, lon: float, radius_m: float, n: int = 120):
-#     """Approximate a circle as a polygon (list of [lon, lat])."""
-#     pts = []
-#     for b in np.linspace(0, 360, n, endpoint=False):
-#         lat2, lon2 = destination_point(lat, lon, float(b), radius_m)
-#         pts.append([lon2, lat2])
-#     pts.append(pts[0])  # close ring
-#     return pts
-
-# def wedge_polygon(lat: float, lon: float, center_bearing_deg: float, half_angle_deg: float, radius_m: float, n: int = 40):
-#     """
-#     Sector / wedge polygon:
-#     - Start at device point
-#     - Go along arc from (center-half_angle) to (center+half_angle)
-#     - Back to device point
-#     Output: list of [lon, lat]
-#     """
-#     start = center_bearing_deg - half_angle_deg
-#     end = center_bearing_deg + half_angle_deg
-
-#     arc = []
-#     for b in np.linspace(start, end, n):
-#         lat2, lon2 = destination_point(lat, lon, float(b), radius_m)
-#         arc.append([lon2, lat2])
-
-#     return [[lon, lat]] + arc + [[lon, lat]]  # close at device
-
-
-# # -------------------------
-# # Streamlit UI
-# # -------------------------
-
-# st.set_page_config(page_title="Drone Direction Map MVP", layout="wide")
-
-# token = os.getenv("MAPBOX_TOKEN")
-# if not token:
-#     st.error("MAPBOX_TOKEN environment variable is not set. Set it and rerun.")
-#     st.stop()
-
-# st.title("Drone Detection Direction on Map (Mapbox + Python)")
-
-# col1, col2, col3 = st.columns(3)
-
-# with col1:
-#     st.subheader("Device location")
-#     lat = st.number_input("Latitude", value=31.7780, format="%.6f")   # Jerusalem-ish default
-#     lon = st.number_input("Longitude", value=35.2350, format="%.6f")
-
-# with col2:
-#     st.subheader("Device heading / azimuth")
-#     device_azimuth = st.slider("Device azimuth (deg, 0=N)", 0.0, 360.0, 0.0, 0.1)
-
-# with col3:
-#     st.subheader("Detection")
-#     bearing_mode = st.selectbox("Bearing mode", ["Relative to device forward", "Absolute (true north)"])
-#     detected_bearing = st.slider("Detected bearing (deg)", 0.0, 360.0, 45.0, 0.1)
-#     confidence = st.slider("Confidence", 0.0, 1.0, 0.8, 0.01)
-
-# # Compute absolute bearing
-# if bearing_mode == "Relative to device forward":
-#     bearing_abs = wrap_deg(device_azimuth + detected_bearing)
-# else:
-#     bearing_abs = wrap_deg(detected_bearing)
-
-# # Overlay configuration
-# st.sidebar.header("Overlay settings")
-# ring_radius_m = st.sidebar.slider("Ring radius (meters)", 50, 3000, 800, 50)
-# wedge_radius_m = st.sidebar.slider("Wedge radius (meters)", 50, 5000, 1200, 50)
-# half_angle = st.sidebar.slider("Wedge half-angle (deg)", 1.0, 30.0, 8.0, 0.5)
-# auto_zoom = st.sidebar.checkbox("Auto zoom to device", value=True)
-# pitch = st.sidebar.slider("Map pitch", 0, 70, 45, 1)
-
-# # Create geometries
-# ring = circle_polygon(lat, lon, ring_radius_m)
-# wedge = wedge_polygon(lat, lon, bearing_abs, half_angle, wedge_radius_m)
-
-# # Data for layers
-# device_point = [{"position": [lon, lat], "label": "Device"}]
-# ring_poly = [{"polygon": ring}]
-# wedge_poly = [{
-#     "polygon": wedge,
-#     "confidence": confidence,
-#     "bearing_abs": bearing_abs
-# }]
-
-# # Color logic (simple): higher confidence => more opaque
-# # pydeck wants RGBA [0..255]; we keep it simple and readable.
-# alpha = int(60 + 160 * confidence)  # 60..220
-# wedge_fill = [255, 0, 0, alpha]     # red with alpha
-
-# layers = [
-#     # Wedge sector
-#     pdk.Layer(
-#         "PolygonLayer",
-#         data=wedge_poly,
-#         get_polygon="polygon",
-#         get_fill_color=wedge_fill,
-#         get_line_color=[255, 0, 0, 255],
-#         line_width_min_pixels=2,
-#         pickable=True,
-#     ),
-#     # 360 ring
-#     pdk.Layer(
-#         "PolygonLayer",
-#         data=ring_poly,
-#         get_polygon="polygon",
-#         get_fill_color=[0, 0, 0, 0],
-#         get_line_color=[0, 255, 255, 180],
-#         line_width_min_pixels=2,
-#         pickable=False,
-#     ),
-#     # Device marker
-#     pdk.Layer(
-#         "ScatterplotLayer",
-#         data=device_point,
-#         get_position="position",
-#         get_radius=10,
-#         radius_min_pixels=6,
-#         get_fill_color=[0, 255, 0, 220],
-#         pickable=True,
-#     ),
-# ]
-
-# tooltip = {
-#     "html": "<b>Bearing:</b> {bearing_abs}°<br/><b>Confidence:</b> {confidence}",
-#     "style": {"backgroundColor": "rgba(0,0,0,0.7)", "color": "white"},
-# }
-
-# view_state = pdk.ViewState(
-#     latitude=lat,
-#     longitude=lon,
-#     zoom=16 if auto_zoom else 12,
-#     pitch=pitch,
-#     bearing=0,  # keep map north-up; overlays show direction
-# )
-
-# deck = pdk.Deck(
-#     map_style="mapbox://styles/mapbox/satellite-streets-v12",
-#     initial_view_state=view_state,
-#     layers=layers,
-#     tooltip=tooltip,
-# )
-
-# st.pydeck_chart(deck, width=True)
-
-# st.markdown(
-#     f"""
-# **Computed absolute bearing:** `{bearing_abs:.1f}°`  
-# (0° = North, clockwise positive)
-# """
-# )
-
-
-
+    streamlit run src/aerosonar/app/app.py
+"""
 import os
 import time
 import math
@@ -208,9 +40,20 @@ DEFAULT_DEMO_WAV = (
     "data/edited_raw/2026-01-19__living-room__drone__low-noise_ambience__g75__22k05__5m__01.wav"
 )
 
-# --- 1. Shared State Bridge ---
+# --- Shared state bridge ---
 class DetectionState:
+    """Detection state shared between the inference thread and the interface.
+
+    Attributes:
+        is_drone: Whether the most recent window was classified as a drone.
+        confidence: Drone probability for that window.
+        last_update: Timestamp of the most recent inference.
+        audio_source: Either ``"microphone"`` or ``"file"``.
+        error: Message describing why audio capture failed, if it did.
+    """
+
     def __init__(self):
+        """Initialise to the no-detection state."""
         self.is_drone = False
         self.confidence = 0.0
         self.last_update = time.time()
@@ -219,11 +62,28 @@ class DetectionState:
 
 @st.cache_resource
 def get_shared_state():
+    """Return the process-wide detection state, created once per session.
+
+    Returns:
+        DetectionState: The shared instance.
+    """
     return DetectionState()
 
-# --- 2. Geometry Helper for the Cone ---
 def get_wedge_polygon(lat, lon, azimuth, radius=1000, angle=30):
-    """Generates a wedge/cone polygon starting from the device."""
+    """Build a wedge polygon fanning out from a point along a bearing.
+
+    Uses a flat-earth approximation, which is accurate enough at the radii involved.
+
+    Args:
+        lat: Origin latitude in degrees.
+        lon: Origin longitude in degrees.
+        azimuth: Centre bearing in degrees, clockwise from north.
+        radius: Wedge radius in metres.
+        angle: Total angular width in degrees.
+
+    Returns:
+        list: Closed ring of ``[longitude, latitude]`` pairs.
+    """
     coords = [[lon, lat]]
     steps = 20
     start_angle = azimuth - (angle / 2)
@@ -232,7 +92,6 @@ def get_wedge_polygon(lat, lon, azimuth, radius=1000, angle=30):
     for i in range(steps + 1):
         curr_angle = start_angle + (i * (end_angle - start_angle) / steps)
         rad = math.radians(curr_angle)
-        # Simple lat/lon approximation for the radius
         dx = radius * math.sin(rad) / 111320.0
         dy = radius * math.cos(rad) / 110540.0
         coords.append([lon + dx, lat + dy])
@@ -241,6 +100,11 @@ def get_wedge_polygon(lat, lon, azimuth, radius=1000, angle=30):
     return coords
 
 def has_input_device() -> bool:
+    """Report whether any audio input device is available.
+
+    Returns:
+        bool: True if a default or enumerable input device exists.
+    """
     try:
         default_in = sd.default.device[0]
         if default_in is not None and default_in >= 0:
@@ -250,6 +114,15 @@ def has_input_device() -> bool:
         return False
 
 def load_inference_model(config, device):
+    """Load the feature extractor and trained model onto a device.
+
+    Args:
+        config: Project configuration.
+        device: Compute device.
+
+    Returns:
+        tuple: ``(transform, model)`` with the model in evaluation mode.
+    """
     transform = SpectrogramTransform(config)
     transform.mel_spectrogram = transform.mel_spectrogram.to(device)
     transform.amplitude_to_db = transform.amplitude_to_db.to(device)
@@ -261,6 +134,15 @@ def load_inference_model(config, device):
     return transform, model
 
 def run_inference_step(state, transform, model, device, buffer):
+    """Classify the current audio window and update the shared state.
+
+    Args:
+        state: The shared :class:`DetectionState`, updated in place.
+        transform: Feature extractor.
+        model: Trained model in evaluation mode.
+        device: Compute device.
+        buffer: The rolling window of audio samples.
+    """
     audio_tensor = torch.from_numpy(buffer).float().to(device)
     with torch.no_grad():
         spec = transform(audio_tensor.unsqueeze(0)).unsqueeze(0)
@@ -273,6 +155,12 @@ def run_inference_step(state, transform, model, device, buffer):
         state.last_update = time.time()
 
 def drain_audio_queue(buffer, audio_q):
+    """Move all queued audio into the rolling window.
+
+    Args:
+        buffer: The rolling window, modified in place.
+        audio_q: Queue fed by the capture callback.
+    """
     while not audio_q.empty():
         data = audio_q.get()
         n = len(data)
@@ -280,6 +168,12 @@ def drain_audio_queue(buffer, audio_q):
         buffer[-n:] = data.flatten()
 
 def start_microphone_thread(state, config):
+    """Capture from the microphone and run inference until the process exits.
+
+    Args:
+        state: The shared :class:`DetectionState`, updated in place.
+        config: Project configuration.
+    """
     sr = config["data"]["sample_rate"]
     window_size = int(sr * config["data"]["duration"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -289,6 +183,7 @@ def start_microphone_thread(state, config):
     buffer = np.zeros(window_size)
 
     def audio_callback(indata, frames, time_info, status):
+        """Hand captured samples to the inference loop. Runs on the audio thread."""
         audio_q.put(indata.copy())
 
     state.audio_source = "microphone"
@@ -299,6 +194,13 @@ def start_microphone_thread(state, config):
             time.sleep(0.05)
 
 def start_file_thread(state, config, wav_path: str):
+    """Loop a WAV file through inference, standing in for live capture.
+
+    Args:
+        state: The shared :class:`DetectionState`, updated in place.
+        config: Project configuration.
+        wav_path: File to loop.
+    """
     sr = config["data"]["sample_rate"]
     window_size = int(sr * config["data"]["duration"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -331,6 +233,13 @@ def start_file_thread(state, config, wav_path: str):
         time.sleep(0.05)
 
 def start_inference_thread(state, config, demo_wav: str):
+    """Start inference on a daemon thread, choosing microphone or file input.
+
+    Args:
+        state: The shared :class:`DetectionState`.
+        config: Project configuration.
+        demo_wav: Fallback WAV file used when no input device is present.
+    """
     try:
         if has_input_device():
             start_microphone_thread(state, config)
@@ -340,7 +249,7 @@ def start_inference_thread(state, config, demo_wav: str):
         state.error = str(exc)
         raise
 
-# --- 4. Streamlit UI Layout ---
+# --- Streamlit UI layout ---
 st.set_page_config(layout="wide", page_title="Drone Detector Live")
 config = load_default_config()
 state = get_shared_state()

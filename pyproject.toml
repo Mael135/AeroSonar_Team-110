@@ -7,7 +7,7 @@ name = "aerosonar"
 version = "0.1.0"
 description = "Drone detection using audio analysis"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
     "numpy",
     "scipy",
@@ -15,10 +15,22 @@ dependencies = [
     "torch",
     "torchaudio",
     "pandas",
-    "pathlib",
-    "tqdm"
+    "tqdm",
+    # training, the verification & evaluation suite, and utils/audit.py
+    "matplotlib",
+    "seaborn",
+    "scikit-learn",
+    "soundfile",
+    "librosa",
+]
 
-
+[project.optional-dependencies]
+# Live microphone capture and the map UI. Not needed to preprocess, train, or run the
+# verification & evaluation suite, so they stay out of the base install.
+live = [
+    "sounddevice",
+    "streamlit",
+    "pydeck",
 ]
 
 # This automatically finds your package inside "src"
