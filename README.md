@@ -158,7 +158,7 @@ python -m aerosonar.training.trainCNN
 **3. Inference.**
 For live detection from a microphone, run 
 ```bash
-python -m aerosonar.inference.inference`.
+python -m aerosonar.inference.inference
 ```
 
 ## 🚀 Deployment
