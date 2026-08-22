@@ -77,7 +77,7 @@ your local machine for development and testing purposes.
 
 Clone the repository
 
-    git clone https://github.com/<user>/aerosonar.git
+    git clone https://github.com/Mael135/AeroSonar_Team-110.git
     cd aerosonar
 
 Open the firmware in STM32CubeIDE via `File → Open Projects from File System`,
